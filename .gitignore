@@ -1,0 +1,7 @@
+# BobsWorld(v1.0)
+node_modules
+node_modules/
+dist
+dist/
+.env
+.DS_Store
