@@ -127,11 +127,11 @@ function init() {
     perspCamera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
     fpvCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
     camera = orthoCamera;
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });         
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });        
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -275,8 +275,9 @@ function init() {
             shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', customFoliageJitter);
             
             shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `
-                vec3 normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-                vec3 geometryNormal = normal;
+                #include <normal_fragment_begin>
+                normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+                nonPerturbedNormal = normal;
             `);
         };
     };
@@ -630,8 +631,14 @@ function animate(time) {
             yieldToBrowser(() => {
                 bob.position.set(shipX, shipY + SHIP_FLOOR_Y + SHIP_ELEV + 0.1, shipZ + 1.0);
                 updateCamera();
-                renderer.compile(scene, camera);
-                bootPhase = 6;
+                
+                // Use async compilation to prevent main thread blocking
+                renderer.compileAsync(scene, camera).then(() => {
+                    bootPhase = 6;
+                }).catch((e) => {
+                    console.warn('Shader compilation issue:', e);
+                    bootPhase = 6;
+                });
             });
         } else if (bootPhase === 6) {
             updateUI("FINALIZING RENDER...", 95);
@@ -926,7 +933,7 @@ function animate(time) {
         window.glassUniforms.uEyeOpen.value = eyeOpen;
         
         let lightFactor = 0.1 + Math.max(0, (1.0 - Math.max(0, sunY)) * 0.9);
-        if (leftFlashLight && rightFlashLight) { leftFlashLight.intensity = rightFlashLight.intensity = 3.0 * lightFactor * (blinkAction > 0 ? (0.4 + eyeOpen * 0.6) : 1.0); }
+        if (leftFlashLight && rightFlashLight) { leftFlashLight.intensity = rightFlashLight.intensity = 300.0 * lightFactor * (blinkAction > 0 ? (0.4 + eyeOpen * 0.6) : 1.0); }
         
         if (bobState === 'thinking') {
             if (window.pathDots) window.pathDots.visible = false;
