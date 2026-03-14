@@ -2,6 +2,7 @@ import { environmentUniforms } from './shaders.js';
 import { shipY, shipX, shipZ } from './terrain.js';
 import { WORLD_SEED } from './math.js';
 import { createGlowTex, createMoonTex } from './textures.js';
+import { chunkManager } from './chunking.js';
 
 export const celestial = {};
 export let sunGlobal = null;
@@ -13,16 +14,21 @@ export const cachedLightingColors = {
     groundColor: new THREE.Color(),
     sunLightColor: new THREE.Color(),
     moonLightColor: new THREE.Color(0xaaccff),
+    fogColor: new THREE.Color(),
     cNightSky: new THREE.Color(0x202b42),
     cNightGround: new THREE.Color(0x151b2b),
+    cNightFog: new THREE.Color(0x1a2235),
     cTwilightSky: new THREE.Color(0x3a4b7a),
     cTwilightGround: new THREE.Color(0x1a2035),
+    cTwilightFog: new THREE.Color(0x4a5568),
     cTwilightSun: new THREE.Color(0xff5e00),
     cGoldenSky: new THREE.Color(0xff6a00),
     cGoldenGround: new THREE.Color(0x886033),
+    cGoldenFog: new THREE.Color(0xb09070),
     cGoldenSun: new THREE.Color(0xffaa44),
     cDaySky: new THREE.Color(0x87ceeb),
     cDayGround: new THREE.Color(0x4a3525),
+    cDayFog: new THREE.Color(0xcccccc), 
     cDaySun: new THREE.Color(0xfff8f0)
 };
 
@@ -70,7 +76,6 @@ export function initEnvironment(scene) {
 
     window.celestial = celestial;
     
-    // 1. Sun (Scaled up 5x, depthWrite disabled)
     const sunGeo = new THREE.SphereGeometry(25, 32, 32);
     const sunMat = new THREE.ShaderMaterial({
         uniforms: { uTime: { value: 0 }, uZenith: { value: 0 }, uColor: { value: new THREE.Vector3(1, 0.8, 0) } },
@@ -80,11 +85,10 @@ export function initEnvironment(scene) {
         depthWrite: false
     });
     const sunMesh = new THREE.Mesh(sunGeo, sunMat);
-    sunMesh.renderOrder = -999; // Render behind world
+    sunMesh.renderOrder = -999; 
     celestial.sun = sunMesh;
     scene.add(sunMesh);
 
-    // Corona (Scaled up 5x, fog disabled)
     const coronaGeo = new THREE.PlaneGeometry(300, 300);
     const coronaMat = new THREE.MeshBasicMaterial({ 
         map: createGlowTex(), transparent: true, opacity: 0.5, 
@@ -95,18 +99,16 @@ export function initEnvironment(scene) {
     celestial.corona = coronaMesh;
     scene.add(coronaMesh);
 
-    // 2. Moon (Scaled up 5x, depthWrite and fog disabled)
     const moonGeo = new THREE.SphereGeometry(20, 32, 32);
     const moonMat = new THREE.MeshStandardMaterial({ 
         map: createMoonTex(), roughness: 0.9, metalness: 0.1, fog: false 
     });
     moonMat.depthWrite = false;
     const moonMesh = new THREE.Mesh(moonGeo, moonMat);
-    moonMesh.renderOrder = -999; // Render behind world
+    moonMesh.renderOrder = -999; 
     celestial.moon = moonMesh;
     scene.add(moonMesh);
 
-    // 3. Stars (Ensure they render behind everything)
     const starCount = 3000;
     const starGeo = new THREE.BufferGeometry();
     const starPos = new Float32Array(starCount * 3);
@@ -130,11 +132,10 @@ export function initEnvironment(scene) {
         depthWrite: false
     });
     const starSystem = new THREE.Points(starGeo, starMat);
-    starSystem.renderOrder = -1000; // Ultimate background
+    starSystem.renderOrder = -1000; 
     celestial.stars = starSystem;
     scene.add(starSystem);
 
-    // 4. Clouds (Kept physical so they drift properly)
     const cloudCount = 200;
     const cloudGeo = new THREE.BoxGeometry(8, 4, 8);
     const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, flatShading: true });
@@ -168,7 +169,6 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
     let mz = Math.cos(moonAngle) * 32;
     let moonShadowY = Math.max(20, Math.abs(my));
     
-    // Physical Lights stay at distance 80 for shadow map precision
     if (sunGlobal) {
         sunGlobal.position.set(snappedX + sx, stableY + shadowY, snappedZ + sz);
         sunGlobal.target.position.set(snappedX, stableY, snappedZ);
@@ -190,7 +190,6 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
             const cy = camera.position.y;
             const cz = camera.position.z;
             
-            // Visual meshes get pushed 5x further away (Distance 400) to act like a Skybox
             if (celestial.sun) {
                 celestial.sun.position.set(cx + (sx * 5), cy + (sy * 5), cz + (sz * 5));
                 celestial.sun.material.uniforms.uZenith.value = Math.max(0, sunY);
@@ -201,7 +200,7 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
                 let camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
                 let sunDir = new THREE.Vector3().copy(celestial.sun.position).sub(camera.position).normalize();
                 let glare = Math.max(0, camDir.dot(sunDir));
-                let s = 200 + glare * 200; // Scaled up 5x
+                let s = 200 + glare * 200; 
                 celestial.corona.scale.set(s, s, 1);
                 celestial.corona.material.opacity = 0.3 + glare * 0.4;
             }
@@ -230,19 +229,26 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
     
     let skyColor = cachedLightingColors.skyColor;
     let groundColor = cachedLightingColors.groundColor;
+    let fogColor = cachedLightingColors.fogColor;
     let sunLightColor = cachedLightingColors.sunLightColor;
     let moonLightColor = cachedLightingColors.moonLightColor;
+    
     const cNightSky = cachedLightingColors.cNightSky;
     const cNightGround = cachedLightingColors.cNightGround;
+    const cNightFog = cachedLightingColors.cNightFog;
     const cTwilightSky = cachedLightingColors.cTwilightSky;
     const cTwilightGround = cachedLightingColors.cTwilightGround;
+    const cTwilightFog = cachedLightingColors.cTwilightFog;
     const cTwilightSun = cachedLightingColors.cTwilightSun;
     const cGoldenSky = cachedLightingColors.cGoldenSky;
     const cGoldenGround = cachedLightingColors.cGoldenGround;
+    const cGoldenFog = cachedLightingColors.cGoldenFog;
     const cGoldenSun = cachedLightingColors.cGoldenSun;
     const cDaySky = cachedLightingColors.cDaySky;
     const cDayGround = cachedLightingColors.cDayGround;
+    const cDayFog = cachedLightingColors.cDayFog;
     const cDaySun = cachedLightingColors.cDaySun;
+    
     let ambientInt = 0.5;
     let sunInt = 0;
     let moonInt = 0;
@@ -251,6 +257,7 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
         let t = Math.min(1, (sunY - 0.3) / 0.7);
         skyColor.copy(cGoldenSky).lerp(cDaySky, t);
         groundColor.copy(cGoldenGround).lerp(cDayGround, t);
+        fogColor.copy(cGoldenFog).lerp(cDayFog, t);
         sunLightColor.copy(cGoldenSun).lerp(cDaySun, t);
         sunInt = 0.8 + t * 0.2; 
         ambientInt = 0.5 + t * 0.2; 
@@ -258,6 +265,7 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
         let t = sunY / 0.3;
         skyColor.copy(cTwilightSky).lerp(cGoldenSky, t);
         groundColor.copy(cTwilightGround).lerp(cGoldenGround, t);
+        fogColor.copy(cTwilightFog).lerp(cGoldenFog, t);
         sunLightColor.copy(cTwilightSun).lerp(cGoldenSun, t);
         sunInt = 0.4 + t * 0.4; 
         ambientInt = 0.45 + t * 0.05; 
@@ -265,6 +273,7 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
         let t = (sunY + 0.2) / 0.2;
         skyColor.copy(cNightSky).lerp(cTwilightSky, t);
         groundColor.copy(cNightGround).lerp(cTwilightGround, t);
+        fogColor.copy(cNightFog).lerp(cTwilightFog, t);
         sunLightColor.copy(cTwilightSun); 
         sunInt = t * 0.4; 
         ambientInt = 0.35 + t * 0.1; 
@@ -272,26 +281,25 @@ export function updateLightingCycle(scene, camera, zoomLevel, sunAngle, sunY, sx
     } else {
         skyColor.copy(cNightSky);
         groundColor.copy(cNightGround);
+        fogColor.copy(cNightFog);
         sunInt = 0;
         ambientInt = 0.35; 
         moonInt = 0.8 + Math.abs(sunY) * 0.5; 
     }
     scene.background = skyColor;
     
-    let chunkRadius = Math.min(5, Math.max(3, Math.ceil(zoomLevel / 12)));
-    let chunkRenderRadiusWorld = chunkRadius * 16;
-    let currentHumid = currentHumidity || 0.0;
-    let fogFactor = Math.max(0.0, Math.min(1.0, (currentHumid - 0.1) / 0.8));
+    let pitch = window.cameraPitch || (45 * Math.PI / 180);
     
-    let baseFogNear = 40 + chunkRenderRadiusWorld - 10;
-    let baseFogFar = 50 + chunkRenderRadiusWorld + 10;
+    let maxZoomDist = Math.hypot(100 * aspect, 100 / Math.sin(pitch));
+    let cacheRadiusWorld = (Math.ceil(maxZoomDist / 16.0) + 2) * 16.0;
+    let camDist = Math.max(50, zoomLevel * 2.5);
     
-    let targetFogNear = baseFogNear - (fogFactor * 30.0);
-    let targetFogFar = baseFogFar - (fogFactor * 40.0);
+    let targetFogFar = camDist + cacheRadiusWorld + 20.0;
+    let targetFogNear = camDist + cacheRadiusWorld - 40.0;
     
-    scene.fog.near += (targetFogNear - scene.fog.near) * 0.05;
-    scene.fog.far += (targetFogFar - scene.fog.far) * 0.05;
-    scene.fog.color.copy(skyColor);
+    scene.fog.near += (targetFogNear - scene.fog.near) * 0.1;
+    scene.fog.far += (targetFogFar - scene.fog.far) * 0.1;
+    scene.fog.color.copy(fogColor); // Uses the new dedicated fog color instead of skyColor
     
     if (sunGlobal) {
         sunGlobal.color = sunLightColor;

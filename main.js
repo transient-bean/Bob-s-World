@@ -127,11 +127,11 @@ function init() {
     perspCamera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
     fpvCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
     camera = orthoCamera;
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });        
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });         
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.shadowMap.autoUpdate = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -275,9 +275,8 @@ function init() {
             shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', customFoliageJitter);
             
             shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `
-                #include <normal_fragment_begin>
-                normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-                nonPerturbedNormal = normal;
+                vec3 normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+                vec3 geometryNormal = normal;
             `);
         };
     };
@@ -502,7 +501,12 @@ function init() {
         if(activePointers.size === 0) stopInput();
     });
     window.addEventListener('pointercancel', stopInput);
-    window.addEventListener('wheel', (e) => { if(!isCinematic && !isFirstPerson) { zoomLevel = Math.max(2, Math.min(100, zoomLevel + e.deltaY * 0.03)); updateCamera(); } });
+    window.addEventListener('wheel', (e) => { 
+        if(!isCinematic && !isFirstPerson) { 
+            zoomLevel = Math.max(2, Math.min(100, zoomLevel + e.deltaY * 0.03)); 
+            updateCamera(); 
+        } 
+    });
     window.addEventListener('resize', () => { 
         renderer.setSize(window.innerWidth, window.innerHeight); 
         perspCamera.aspect = window.innerWidth / window.innerHeight;
@@ -528,7 +532,8 @@ function updateCamera() {
         fpvCamera.updateProjectionMatrix();
     } else {
         if (camera !== orthoCamera) camera = orthoCamera;
-        const d = 50; 
+        
+        const d = Math.max(50, zoomLevel * 2.5); 
         
         const camY = Math.sin(cameraPitch) * d;
         const xz = Math.cos(cameraPitch) * d;
@@ -603,23 +608,32 @@ function animate(time) {
             });
         } else if (bootPhase === 4) {
             let targetPos = new THREE.Vector3(shipX, shipY, shipZ + 10);
-            let zLevel = Math.max(10, zoomLevel);
+            // Gives the background cache a massive head start before loading completes
+            let zLevel = Math.max(50, zoomLevel); 
             
             chunkManager.update(targetPos, zLevel, false); 
             
-            let radius = Math.min(5, Math.max(3, Math.ceil(zLevel / 12)));
-            let targetCount = Math.pow(radius * 2 + 1, 2);
+            let aspect = window.innerWidth / window.innerHeight;
+            let pitch = window.cameraPitch || (45 * Math.PI / 180);
+            let groundZ = zLevel / Math.sin(pitch);
+            let groundX = zLevel * aspect;
+            let maxVisibleDist = Math.hypot(groundX, groundZ);
+            let renderRadius = Math.ceil(maxVisibleDist / CHUNK_SIZE) + 1;
+            
+            let targetCount = Math.pow(renderRadius * 2 + 1, 2);
             
             let bx = Math.floor(targetPos.x / CHUNK_SIZE), bz = Math.floor(targetPos.z / CHUNK_SIZE);
             let currentLoaded = 0;
-            for(let x = bx - radius; x <= bx + radius; x++) {
-                for(let z = bz - radius; z <= bz + radius; z++) {
-                    if (chunkManager.activeChunks.has(`${x},${z}`)) currentLoaded++;
+            for(let x = bx - renderRadius; x <= bx + renderRadius; x++) {
+                for(let z = bz - renderRadius; z <= bz + renderRadius; z++) {
+                    if (chunkManager.activeChunks.has(`${x},${z}`)) {
+                        currentLoaded++;
+                    }
                 }
             }
             
             let pct = 55 + Math.floor((currentLoaded / targetCount) * 35); 
-            updateUI(`MAPPING TERRAIN (${currentLoaded}/${targetCount})...`, pct);
+            updateUI(`MAPPING TERRAIN (${currentLoaded}/${targetCount})...`, Math.min(90, pct));
             
             if (currentLoaded >= targetCount) {
                 bootPhase = 5;
@@ -631,14 +645,8 @@ function animate(time) {
             yieldToBrowser(() => {
                 bob.position.set(shipX, shipY + SHIP_FLOOR_Y + SHIP_ELEV + 0.1, shipZ + 1.0);
                 updateCamera();
-                
-                // Use async compilation to prevent main thread blocking
-                renderer.compileAsync(scene, camera).then(() => {
-                    bootPhase = 6;
-                }).catch((e) => {
-                    console.warn('Shader compilation issue:', e);
-                    bootPhase = 6;
-                });
+                renderer.compile(scene, camera);
+                bootPhase = 6;
             });
         } else if (bootPhase === 6) {
             updateUI("FINALIZING RENDER...", 95);
@@ -933,7 +941,7 @@ function animate(time) {
         window.glassUniforms.uEyeOpen.value = eyeOpen;
         
         let lightFactor = 0.1 + Math.max(0, (1.0 - Math.max(0, sunY)) * 0.9);
-        if (leftFlashLight && rightFlashLight) { leftFlashLight.intensity = rightFlashLight.intensity = 300.0 * lightFactor * (blinkAction > 0 ? (0.4 + eyeOpen * 0.6) : 1.0); }
+        if (leftFlashLight && rightFlashLight) { leftFlashLight.intensity = rightFlashLight.intensity = 25.0 * lightFactor * (blinkAction > 0 ? (0.4 + eyeOpen * 0.6) : 1.0); }
         
         if (bobState === 'thinking') {
             if (window.pathDots) window.pathDots.visible = false;
